@@ -1,5 +1,6 @@
 #include <math.h>
 #include <Bluepad32.h>
+#include <SPI.h>
 
 #define JOYSTICK_STEPS     1024
 #define JOYSTICK_RADIUS    512
@@ -7,6 +8,18 @@
 #define WIPER_SCALE_FACTOR 0.75
 #define JOYSTICK_STEPS     1024  // 0 to 1023
 #define WIPER_STEPS        257   // 0 to 256, 257 steps
+
+#define PIN_U1_CS    4  // x-axis, upper pot
+#define PIN_U2_CS    5  // x-axis, lower pot
+#define PIN_U3_CS    16 // y-axis, upper pot
+#define PIN_U4_CS    19 // y-axis, lower pot
+#define PIN_SPI_SCK  18
+#define PIN_SPI_MOSI 23
+#define PIN_BTN0     32
+#define PIN_BTN1     33
+
+// 1 MHz
+SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
 
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
@@ -84,12 +97,12 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
     if (abs(cos_theta) > abs(sin_theta)) {
         // will hit left or right edge first, so scale such that
         // x would reach +/- 1.
-        scale = 1.0f / abs(cos_theta);
+        scale = 1.0f / max(abs(cos_theta), 0.0001f);
     }
     else {
         // will hit top or bottom edge first, so scale such that
         // y would reach +/- 1.
-        scale = 1.0f / abs(sin_theta);
+        scale = 1.0f / max(abs(sin_theta), 0.0001f);
     }
 
     // Interpolate between original circle and square,
@@ -97,14 +110,14 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
     float final_scale = 1.0f + (scale - 1.0f) * SQUARENESS;
 
     // make sure to clamp so we never output greater than 1.0.
-    squaredx = constrain(cx * final_scale, -1.0, 1.0);
-    squaredy = constrain(cy * final_scale, -1.0, 1.0);
+    squaredx = constrain(cx * final_scale, -1.0f, 1.0f);
+    squaredy = constrain(cy * final_scale, -1.0f, 1.0f);
 
     // now convert back to original range
     squaredx = squaredx * JOYSTICK_RADIUS;
     squaredy = squaredy * JOYSTICK_RADIUS;
 
-    Serial.printf("rawx: %+.3f, rawy: %+.3f, cx: %+.3f, cy: %+.3f, squaredx: %+.3f, squaredy: %+.3f\n", (float)rawx, (float)rawy, cx, cy, squaredx, squaredy);
+    Serial.printf("rawx: %+d, rawy: %+d, cx: %+.3f, cy: %+.3f, squaredx: %+.3f, squaredy: %+.3f\n", rawx, rawy, cx, cy, squaredx, squaredy);
 }
 
 void dumpGamepad(ControllerPtr ctl) {
@@ -114,13 +127,16 @@ void dumpGamepad(ControllerPtr ctl) {
     float squaredx, squaredy;
     squareTheCircle(rawx, rawy, squaredx, squaredy);
 
-    float percentx = (squaredx + 512) / JOYSTICK_STEPS;
-    int32_t wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
+    float percentx = (squaredx + 512.0f) / JOYSTICK_STEPS;
+    uint8_t wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
 
-    float percenty = (squaredy + 512) / JOYSTICK_STEPS;
-    int32_t wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
+    float percenty = (squaredy + 512.0f) / JOYSTICK_STEPS;
+    uint8_t wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
 
-    Serial.printf("rawx: %+.3f, squaredx: %+.3f, wiperx: %d, rawy: %+.3f, squaredy: %+.3f, wiperY: %d\n", rawx, squaredx, wiperx, rawy, squaredy, wipery);
+    write_digipot(PIN_U1_CS, wiperx);
+    write_digipot(PIN_U2_CS, wiperx);
+
+    Serial.printf("rawx: %+d, squaredx: %+.3f, wiperx: %d, rawy: %+d, squaredy: %+.3f, wipery: %d\n", rawx, squaredx, wiperx, rawy, squaredy, wipery);
 
 }
 
@@ -187,12 +203,37 @@ void processControllers() {
     }
 }
 
+void write_digipot(uint8_t chip_select_pin, uint8_t data) {
+    SPI.beginTransaction(digipotSPI);
+    digitalWrite(chip_select_pin, LOW);
+
+    SPI.transfer(0x00);   // Command: write wiper 0
+    SPI.transfer(data);   // Data: 0–255
+
+    Serial.print("Wrote: ");
+    Serial.print(data);
+    Serial.print(" to pin ");
+    Serial.println(chip_select_pin);
+
+    digitalWrite(chip_select_pin, HIGH);
+    SPI.endTransaction();
+}
+
 // Arduino setup function. Runs in CPU 1
 void setup() {
     // let things settle before starting. was getting garbe in serial monitor until I did this.
     delay(1000);
     Serial.flush();
     Serial.begin(115200);
+
+    pinMode(PIN_U1_CS, OUTPUT);
+    digitalWrite(PIN_U1_CS, HIGH);
+
+    pinMode(PIN_U2_CS, OUTPUT);
+    digitalWrite(PIN_U1_CS, HIGH);
+
+    SPI.begin(PIN_SPI_SCK, -1, PIN_SPI_MOSI, -1);
+
     Serial.printf("Firmware: %s\n", BP32.firmwareVersion());
     const uint8_t* addr = BP32.localBdAddress();
     Serial.printf("BD Addr: %2X:%2X:%2X:%2X:%2X:%2X\n", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
@@ -207,28 +248,41 @@ void setup() {
     // But it might also fix some connection / re-connection issues.
     BP32.forgetBluetoothKeys();
 
-    // Enables mouse / touchpad support for gamepads that support them.
-    // When enabled, controllers like DualSense and DualShock4 generate two connected devices:
-    // - First one: the gamepad
-    // - Second one, which is a "virtual device", is a mouse.
-    // By default, it is disabled.
-    BP32.enableVirtualDevice(false);
+    // // Enables mouse / touchpad support for gamepads that support them.
+    // // When enabled, controllers like DualSense and DualShock4 generate two connected devices:
+    // // - First one: the gamepad
+    // // - Second one, which is a "virtual device", is a mouse.
+    // // By default, it is disabled.
+    // BP32.enableVirtualDevice(false);
 }
 
 // Arduino loop function. Runs in CPU 1.
 void loop() {
-    // This call fetches all the controllers' data.
-    // Call this function in your main loop.
+
+//   // Sweep the pot from min to max
+//   for (int value = 0; value <= 255; value++) {
+//     write_digipot(PIN_U1_CS, value);
+//     delay(10);
+//   }
+
+//   delay(500);
+
+//   // Sweep back down
+//   for (int value = 255; value >= 0; value--) {
+//     write_digipot(PIN_U1_CS, value);
+//     delay(10);
+//   }
+
+//   delay(500);
+//   return;
+
     bool dataUpdated = BP32.update();
-    if (dataUpdated)
-        processControllers();
+    if (!dataUpdated) return;
 
-    // The main loop must have some kind of "yield to lower priority task" event.
-    // Otherwise, the watchdog will get triggered.
-    // If your main loop doesn't have one, just add a simple `vTaskDelay(1)`.
-    // Detailed info here:
-    // https://stackoverflow.com/questions/66278271/task-watchdog-got-triggered-the-tasks-did-not-reset-the-watchdog-in-time
-
+    processControllers();
     vTaskDelay(1);
+
+
+
     delay(150);
 }
