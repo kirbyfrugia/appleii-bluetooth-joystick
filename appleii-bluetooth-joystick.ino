@@ -1,43 +1,12 @@
 #include <math.h>
-
-
-// Pairing controllers:
-//
-//   Pairing is automatic.
-//
-//   When PIN XYZ is high, it will be in pairing mode. Any devices
-//   that are in pairing mode will pair automatically.
-
-
-// Working with bluepad32:
-// https://gitlab.com/ricardoquesada/bluepad32/-/blob/main/docs/plat_arduino.md#1-add-esp32-and-bluepad32-board-packages-to-board-manager
-// https://github.com/ricardoquesada/esp-idf-arduino-bluepad32-template
-
-
-// Digital potentiometers:
-//   Each axis has two 100kohm digital potentiometers. The Apple II expects pots to provide
-//   between 0 and 150kohms resistance. 150kohm digital resistors seem nearly impossible
-//   to find.
-//
-//   If you want to make it cheaper, just use one 100kohm digipot. You'll just lose some range
-//   at the upper end. I haven't tried this, but it should at least make something workable.
-//
-//   But for mine, I use two [MCP4161-104E/P digipots](https://www.digikey.com/en/products/detail/microchip-technology/MCP4161-104E-P/1874169)
-//   These have 256 steps and when used in serial we can provide the expected range for the Apple II. These
-//   were only $1.38 when I bought them, so I bought a bunch. Shipping is extra.
-//
-//   So how to use 2 per axis?
-//   The bluepad32 library gives readings between -512 and 511 for analog axes. At least
-//   on my controller. At -512, we set the digipots to 0kohms. At 512, we set them to
-//   150kohms total for the series.
-//
-//   To keep everything simpler, we just set equal resistance on each digipot. So if we want to
-//   go max resistance, we set both digipots to 75kohms.
-
-// Buttons:
-//   The Apple II buttons are active low, so we write zero when pressed, high when not pressed.
-
 #include <Bluepad32.h>
+
+#define JOYSTICK_STEPS     1024
+#define JOYSTICK_RADIUS    512
+#define SQUARENESS         0.75  // see squareTheCircle for explanation
+#define WIPER_SCALE_FACTOR 0.75
+#define JOYSTICK_STEPS     1024  // 0 to 1023
+#define WIPER_STEPS        257   // 0 to 256, 257 steps
 
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
@@ -80,13 +49,6 @@ void onDisconnectedController(ControllerPtr ctl) {
     }
 }
 
-#define JOYSTICK_STEPS     1024
-#define JOYSTICK_RADIUS    512
-#define SQUARENESS         0.75  // see squareTheCircle for explanation
-#define WIPER_SCALE_FACTOR 0.75
-#define JOYSTICK_STEPS     1024  // 0 to 1023
-#define WIPER_STEPS        257   // 0 to 256, 257 steps
-
 // Apple II joysticks (at the least the one I have) allows input
 // along the x- and y-axis to be closer to a square, or more like
 // a rounded square.
@@ -120,12 +82,12 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
     // edge of a square. scale will always be >= 1.0;
     float scale = 1.0f;
     if (abs(cos_theta) > abs(sin_theta)) {
-        // will hit left or right edge, so scale such that
+        // will hit left or right edge first, so scale such that
         // x would reach +/- 1.
         scale = 1.0f / abs(cos_theta);
     }
     else {
-        // will hit top or bottom edge, so scale such that
+        // will hit top or bottom edge first, so scale such that
         // y would reach +/- 1.
         scale = 1.0f / abs(sin_theta);
     }
