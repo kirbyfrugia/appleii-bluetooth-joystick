@@ -17,48 +17,34 @@
 #define PIN_SPI_MOSI 23
 #define PIN_BTN0     32
 #define PIN_BTN1     33
+#define PIN_PAIR     26 // Active Low
+
+volatile bool is_pairing = false;
+volatile bool loading_new_controller = false;
 
 // 1 MHz
 SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
+ControllerPtr controller = nullptr;
 
-ControllerPtr myControllers[BP32_MAX_GAMEPADS];
-
-// This callback gets called any time a new gamepad is connected.
-// Up to 4 gamepads can be connected at the same time.
 void onConnectedController(ControllerPtr ctl) {
-    bool foundEmptySlot = false;
-    for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
-        if (myControllers[i] == nullptr) {
-            Serial.printf("CALLBACK: Controller is connected, index=%d\n", i);
-            // Additionally, you can get certain gamepad properties like:
-            // Model, VID, PID, BTAddr, flags, etc.
-            ControllerProperties properties = ctl->getProperties();
-            Serial.printf("Controller model: %s, VID=0x%04x, PID=0x%04x\n", ctl->getModelName().c_str(), properties.vendor_id,
-                           properties.product_id);
-            myControllers[i] = ctl;
-            foundEmptySlot = true;
-            break;
-        }
-    }
-    if (!foundEmptySlot) {
-        Serial.println("CALLBACK: Controller connected, but could not found empty slot");
-    }
+    ControllerProperties properties = ctl->getProperties();
+
+    Serial.printf("Controller connected: %s, VID=0x%04x, PID=0x%04x\n",
+        ctl->getModelName().c_str(), properties.vendor_id, properties.product_id);
+
+    controller = ctl;
 }
 
 void onDisconnectedController(ControllerPtr ctl) {
-    bool foundController = false;
+    ControllerProperties properties = ctl->getProperties();
 
-    for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
-        if (myControllers[i] == ctl) {
-            Serial.printf("CALLBACK: Controller disconnected from index=%d\n", i);
-            myControllers[i] = nullptr;
-            foundController = true;
-            break;
-        }
-    }
-
-    if (!foundController) {
-        Serial.println("CALLBACK: Controller disconnected, but not found in myControllers");
+    Serial.printf("Controller disconnected: %s, VID=0x%04x, PID=0x%04x\n",
+        ctl->getModelName().c_str(), properties.vendor_id, properties.product_id);
+    
+    if (controller == ctl) {
+        // Note: don't know how bluepad32 handles pointers. There could be a memory leak.
+        // Just setting our ptr to null
+        controller = nullptr;
     }
 }
 
@@ -72,7 +58,6 @@ void onDisconnectedController(ControllerPtr ctl) {
 // So this function will project our inputs out to fill a square.
 //
 // You can control how much of a square we make using SQUARENESS.
-
 void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squaredy) {
     // normalize the inputs to a unit circle
     float cx = (float)rawx / JOYSTICK_RADIUS;
@@ -120,9 +105,19 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
     Serial.printf("rawx: %+d, rawy: %+d, cx: %+.3f, cy: %+.3f, squaredx: %+.3f, squaredy: %+.3f\n", rawx, rawy, cx, cy, squaredx, squaredy);
 }
 
-void dumpGamepad(ControllerPtr ctl) {
-    int32_t rawx = ctl->axisX();
-    int32_t rawy = ctl->axisY();
+void processGamepad() {
+
+}
+
+
+void process_controller() {
+    if (!controller->isGamepad()) {
+        Serial.println(F("Ignoring controller input, not a gamepad"));
+        return;
+    }
+
+    int32_t rawx = controller->axisX();
+    int32_t rawy = controller->axisY();
 
     float squaredx, squaredy;
     squareTheCircle(rawx, rawy, squaredx, squaredy);
@@ -136,71 +131,10 @@ void dumpGamepad(ControllerPtr ctl) {
     write_digipot(PIN_U1_CS, wiperx);
     write_digipot(PIN_U2_CS, wiperx);
 
+    write_digipot(PIN_U3_CS, wipery);
+    write_digipot(PIN_U4_CS, wipery);
+
     Serial.printf("rawx: %+d, squaredx: %+.3f, wiperx: %d, rawy: %+d, squaredy: %+.3f, wipery: %d\n", rawx, squaredx, wiperx, rawy, squaredy, wipery);
-
-}
-
-void processGamepad(ControllerPtr ctl) {
-    // There are different ways to query whether a button is pressed.
-    // By query each button individually:
-    //  a(), b(), x(), y(), l1(), etc...
-    if (ctl->a()) {
-        static int colorIdx = 0;
-        // Some gamepads like DS4 and DualSense support changing the color LED.
-        // It is possible to change it by calling:
-        switch (colorIdx % 3) {
-            case 0:
-                // Red
-                ctl->setColorLED(255, 0, 0);
-                break;
-            case 1:
-                // Green
-                ctl->setColorLED(0, 255, 0);
-                break;
-            case 2:
-                // Blue
-                ctl->setColorLED(0, 0, 255);
-                break;
-        }
-        colorIdx++;
-    }
-
-    if (ctl->b()) {
-        // Turn on the 4 LED. Each bit represents one LED.
-        static int led = 0;
-        led++;
-        // Some gamepads like the DS3, DualSense, Nintendo Wii, Nintendo Switch
-        // support changing the "Player LEDs": those 4 LEDs that usually indicate
-        // the "gamepad seat".
-        // It is possible to change them by calling:
-        ctl->setPlayerLEDs(led & 0x0f);
-    }
-
-    if (ctl->x()) {
-        // Some gamepads like DS3, DS4, DualSense, Switch, Xbox One S, Stadia support rumble.
-        // It is possible to set it by calling:
-        // Some controllers have two motors: "strong motor", "weak motor".
-        // It is possible to control them independently.
-        ctl->playDualRumble(0 /* delayedStartMs */, 250 /* durationMs */, 0x80 /* weakMagnitude */,
-                            0x40 /* strongMagnitude */);
-    }
-
-    // Another way to query controller data is by getting the buttons() function.
-    // See how the different "dump*" functions dump the Controller info.
-    dumpGamepad(ctl);
-}
-
-
-void processControllers() {
-    for (auto myController : myControllers) {
-        if (myController && myController->isConnected() && myController->hasData()) {
-            if (myController->isGamepad()) {
-                processGamepad(myController);
-            } else {
-                Serial.println("Unsupported controller");
-            }
-        }
-    }
 }
 
 void write_digipot(uint8_t chip_select_pin, uint8_t data) {
@@ -227,62 +161,98 @@ void setup() {
     Serial.begin(115200);
 
     pinMode(PIN_U1_CS, OUTPUT);
-    digitalWrite(PIN_U1_CS, HIGH);
-
     pinMode(PIN_U2_CS, OUTPUT);
+    pinMode(PIN_U3_CS, OUTPUT);
+    pinMode(PIN_U4_CS, OUTPUT);
+
     digitalWrite(PIN_U1_CS, HIGH);
+    digitalWrite(PIN_U2_CS, HIGH);
+    digitalWrite(PIN_U3_CS, HIGH);
+    digitalWrite(PIN_U4_CS, HIGH);
+
+    pinMode(PIN_PAIR, INPUT_PULLUP);
 
     SPI.begin(PIN_SPI_SCK, -1, PIN_SPI_MOSI, -1);
 
-    Serial.printf("Firmware: %s\n", BP32.firmwareVersion());
+    Serial.printf("Bluepad32 Firmware: %s\n", BP32.firmwareVersion());
     const uint8_t* addr = BP32.localBdAddress();
     Serial.printf("BD Addr: %2X:%2X:%2X:%2X:%2X:%2X\n", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 
     // Setup the Bluepad32 callbacks
     BP32.setup(&onConnectedController, &onDisconnectedController);
-
-    // "forgetBluetoothKeys()" should be called when the user performs
-    // a "device factory reset", or similar.
-    // Calling "forgetBluetoothKeys" in setup() just as an example.
-    // Forgetting Bluetooth keys prevents "paired" gamepads to reconnect.
-    // But it might also fix some connection / re-connection issues.
     BP32.forgetBluetoothKeys();
 
-    // // Enables mouse / touchpad support for gamepads that support them.
-    // // When enabled, controllers like DualSense and DualShock4 generate two connected devices:
-    // // - First one: the gamepad
-    // // - Second one, which is a "virtual device", is a mouse.
-    // // By default, it is disabled.
-    // BP32.enableVirtualDevice(false);
+    Serial.println(F("Pairing enabled: false"));
+    BP32.enableNewBluetoothConnections(false);
 }
+
+void check_pairing() {
+    // pairing pin is active low
+    bool pairing = !digitalRead(PIN_PAIR);
+
+    if (pairing == is_pairing) return;
+
+    is_pairing = pairing;
+    Serial.printf("Pairing enabled: %s\n", is_pairing ? "true" : "false");
+    BP32.enableNewBluetoothConnections(is_pairing);
+}
+
+// void load_new_controller() {
+//     Serial.println(F("New controller detected"));
+    
+//     if (!new_controller->isGamepad()) return;
+
+//     Serial.println(F("Controller is a gamepad"));
+
+//     // if we already have a controller connected, start disconnecting it.
+//     if (controller && controller != new_controller) {
+//         Serial.println("Disconnecting existing controller");
+//         controller->disconnect();
+//     }
+
+//     loading_new_controller = true;
+
+//     // controller = new_controller;
+
+//     // ControllerProperties properties = new_controller->getProperties();
+
+//     // Serial.printf("Controller connected: %s, VID=0x%04x, PID=0x%04x\n",
+//     //     controller->getModelName().c_str(), properties.vendor_id, properties.product_id);
+
+//     // new_controller = nullptr;
+// }
+
+// // returns true if a controller has been connected but isn't yet active
+// bool pending_new_controller() {
+//     if (!new_controller) return false;
+
+//     // first time we see we have a new controller
+//     if (!loading_new_controller) {
+//         load_new_controller();
+//         return true;
+//     }
+
+//     // wait for old controller to disconnect
+//     if (controller && controller->isConnected()) return true;
+
+//     controller = new_controller;
+//     // btw, not sure what bluepad32 does with pointers...this could be leaking memory
+//     // because I'm not deleting...
+//     new_controller = nullptr;
+
+//     return false;
+// }
 
 // Arduino loop function. Runs in CPU 1.
 void loop() {
+    check_pairing();
 
-//   // Sweep the pot from min to max
-//   for (int value = 0; value <= 255; value++) {
-//     write_digipot(PIN_U1_CS, value);
-//     delay(10);
-//   }
+    if (!BP32.update()) return;
 
-//   delay(500);
+    if(controller && controller->isConnected() && controller->hasData()) {
+        process_controller();
+    }
 
-//   // Sweep back down
-//   for (int value = 255; value >= 0; value--) {
-//     write_digipot(PIN_U1_CS, value);
-//     delay(10);
-//   }
-
-//   delay(500);
-//   return;
-
-    bool dataUpdated = BP32.update();
-    if (!dataUpdated) return;
-
-    processControllers();
     vTaskDelay(1);
-
-
-
     delay(150);
 }
