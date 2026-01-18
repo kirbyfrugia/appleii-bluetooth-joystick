@@ -15,17 +15,18 @@
 #define PIN_U4_CS    19 // y-axis, lower pot
 #define PIN_SPI_SCK  18
 #define PIN_SPI_MOSI 23
-#define PIN_BTN0     32
-#define PIN_BTN1     33
+#define PIN_G_BTN0     32
+#define PIN_G_BTN1     33
 #define PIN_PAIR     26 // Active Low
 
 #define WRITE_WIPER_CMD 0b00000000
 
-volatile bool is_pairing = false;
-uint8_t       wiperx     = 0.0f;
-uint8_t       wipery     = 0.0f;
-bool          btn0       = false;
-bool          btn1       = true;
+bool          g_is_pairing   = false;
+bool          g_data_changed = false;
+uint8_t       g_wiperx       = 0.0f;
+uint8_t       g_wipery       = 0.0f;
+bool          g_btn0         = false;
+bool          g_btn1         = true;
 
 // 1 MHz
 SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
@@ -118,33 +119,44 @@ void process_stick() {
     squareTheCircle(rawx, rawy, squaredx, squaredy);
 
     float percentx = (squaredx + 512.0f) / JOYSTICK_STEPS;
-    wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
+    uint8_t wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
 
     float percenty = (squaredy + 512.0f) / JOYSTICK_STEPS;
-    wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
+    uint8_t wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
 
-    write_digipot(PIN_U1_CS, wiperx);
-    write_digipot(PIN_U2_CS, wiperx);
+    if (wiperx != g_wiperx) {
+        g_data_changed = true;
+        g_wiperx = wiperx;
+        write_digipot(PIN_U1_CS, g_wiperx);
+        write_digipot(PIN_U2_CS, g_wiperx);
+    }
 
-    write_digipot(PIN_U3_CS, wipery);
-    write_digipot(PIN_U4_CS, wipery);
+    if (wipery != g_wipery) {
+        g_data_changed = true;
+        g_wipery = wipery;
+        write_digipot(PIN_U3_CS, g_wipery);
+        write_digipot(PIN_U4_CS, g_wipery);
+    }
 
-    // Serial.printf("rawx: %+d, squaredx: %+.3f, wiperx: %d, rawy: %+d, squaredy: %+.3f, wipery: %d\n", rawx, squaredx, wiperx, rawy, squaredy, wipery);
+
+    // Serial.printf("rawx: %+d, squaredx: %+.3f, g_wiperx: %d, rawy: %+d, squaredy: %+.3f, g_wipery: %d\n", rawx, squaredx, g_wiperx, rawy, squaredy, g_wipery);
 }
 
 void process_buttons() {
-    btn0 = controller->a();
-    btn1 = controller->b();
+    bool btn0 = controller->a();
+    bool btn1 = controller->b();
 
-    if (btn0)
-        digitalWrite(PIN_BTN0, HIGH);
-    else
-        digitalWrite(PIN_BTN0, LOW);
-    
-    if (btn1)
-        digitalWrite(PIN_BTN1, HIGH);
-    else
-        digitalWrite(PIN_BTN1, LOW);
+    if (btn0 != g_btn0) {
+        g_data_changed = true;
+        g_btn0 = btn0;
+        digitalWrite(PIN_G_BTN0, g_btn0);
+    }
+
+    if (btn1 != g_btn1) {
+        g_data_changed = true;
+        g_btn1 = btn1;
+        digitalWrite(PIN_G_BTN1, g_btn1);
+    }
 }
 
 void process_controller() {
@@ -153,13 +165,17 @@ void process_controller() {
         return;
     }
 
+    g_data_changed = false;
+
     process_stick();
     process_buttons();
 
-    String btn0_str = btn0 ? "pressed" : "not pressed";
-    String btn1_str = btn1 ? "pressed" : "not pressed";
-    Serial.printf("wipers: (%.3d,%.3d), btn0: %s, btn1: %s\n",
-        wiperx, wipery, btn0_str.c_str(), btn1_str.c_str());
+    if (g_data_changed) {
+        String g_btn0_str = g_btn0 ? "pressed" : "not pressed";
+        String g_btn1_str = g_btn1 ? "pressed" : "not pressed";
+        Serial.printf("wipers: (%.3d,%.3d), g_btn0: %s, g_btn1: %s\n",
+            g_wiperx, g_wipery, g_btn0_str.c_str(), g_btn1_str.c_str());
+    }
 }
 
 void write_digipot(uint8_t chip_select_pin, uint16_t data) {
@@ -193,15 +209,15 @@ void setup() {
     pinMode(PIN_U2_CS, OUTPUT);
     pinMode(PIN_U3_CS, OUTPUT);
     pinMode(PIN_U4_CS, OUTPUT);
-    pinMode(PIN_BTN0, OUTPUT);
-    pinMode(PIN_BTN1, OUTPUT);
+    pinMode(PIN_G_BTN0, OUTPUT);
+    pinMode(PIN_G_BTN1, OUTPUT);
 
     digitalWrite(PIN_U1_CS, HIGH);
     digitalWrite(PIN_U2_CS, HIGH);
     digitalWrite(PIN_U3_CS, HIGH);
     digitalWrite(PIN_U4_CS, HIGH);
-    digitalWrite(PIN_BTN0, LOW);
-    digitalWrite(PIN_BTN1, LOW);
+    digitalWrite(PIN_G_BTN0, LOW);
+    digitalWrite(PIN_G_BTN1, LOW);
 
     pinMode(PIN_PAIR, INPUT_PULLUP);
 
@@ -222,11 +238,11 @@ void setup() {
 void check_pairing() {
     bool pairing = !digitalRead(PIN_PAIR);
 
-    if (pairing == is_pairing) return;
+    if (pairing == g_is_pairing) return;
 
-    is_pairing = pairing;
-    Serial.printf("Pairing enabled: %s\n", is_pairing ? "true" : "false");
-    BP32.enableNewBluetoothConnections(is_pairing);
+    g_is_pairing = pairing;
+    Serial.printf("Pairing enabled: %s\n", g_is_pairing ? "true" : "false");
+    BP32.enableNewBluetoothConnections(g_is_pairing);
 }
 
 void loop() {
@@ -239,5 +255,5 @@ void loop() {
     }
 
     vTaskDelay(1);
-    delay(150);
+    //delay(150);
 }
