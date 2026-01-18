@@ -19,8 +19,13 @@
 #define PIN_BTN1     33
 #define PIN_PAIR     26 // Active Low
 
+#define WRITE_WIPER_CMD 0b00000000
+
 volatile bool is_pairing = false;
-volatile bool loading_new_controller = false;
+uint8_t       wiperx     = 0.0f;
+uint8_t       wipery     = 0.0f;
+bool          btn0       = false;
+bool          btn1       = true;
 
 // 1 MHz
 SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
@@ -102,20 +107,10 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
     squaredx = squaredx * JOYSTICK_RADIUS;
     squaredy = squaredy * JOYSTICK_RADIUS;
 
-    Serial.printf("rawx: %+d, rawy: %+d, cx: %+.3f, cy: %+.3f, squaredx: %+.3f, squaredy: %+.3f\n", rawx, rawy, cx, cy, squaredx, squaredy);
+    // Serial.printf("rawx: %+d, rawy: %+d, cx: %+.3f, cy: %+.3f, squaredx: %+.3f, squaredy: %+.3f\n", rawx, rawy, cx, cy, squaredx, squaredy);
 }
 
-void processGamepad() {
-
-}
-
-
-void process_controller() {
-    if (!controller->isGamepad()) {
-        Serial.println(F("Ignoring controller input, not a gamepad"));
-        return;
-    }
-
+void process_stick() {
     int32_t rawx = controller->axisX();
     int32_t rawy = controller->axisY();
 
@@ -123,10 +118,10 @@ void process_controller() {
     squareTheCircle(rawx, rawy, squaredx, squaredy);
 
     float percentx = (squaredx + 512.0f) / JOYSTICK_STEPS;
-    uint8_t wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
+    wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
 
     float percenty = (squaredy + 512.0f) / JOYSTICK_STEPS;
-    uint8_t wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
+    wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
 
     write_digipot(PIN_U1_CS, wiperx);
     write_digipot(PIN_U2_CS, wiperx);
@@ -134,28 +129,62 @@ void process_controller() {
     write_digipot(PIN_U3_CS, wipery);
     write_digipot(PIN_U4_CS, wipery);
 
-    Serial.printf("rawx: %+d, squaredx: %+.3f, wiperx: %d, rawy: %+d, squaredy: %+.3f, wipery: %d\n", rawx, squaredx, wiperx, rawy, squaredy, wipery);
+    // Serial.printf("rawx: %+d, squaredx: %+.3f, wiperx: %d, rawy: %+d, squaredy: %+.3f, wipery: %d\n", rawx, squaredx, wiperx, rawy, squaredy, wipery);
 }
 
-void write_digipot(uint8_t chip_select_pin, uint8_t data) {
+void process_buttons() {
+    btn0 = controller->a();
+    btn1 = controller->b();
+
+    if (btn0)
+        digitalWrite(PIN_BTN0, HIGH);
+    else
+        digitalWrite(PIN_BTN0, LOW);
+    
+    if (btn1)
+        digitalWrite(PIN_BTN1, HIGH);
+    else
+        digitalWrite(PIN_BTN1, LOW);
+}
+
+void process_controller() {
+    if (!controller->isGamepad()) {
+        Serial.println(F("Ignoring controller input, not a gamepad"));
+        return;
+    }
+
+    process_stick();
+    process_buttons();
+
+    String btn0_str = btn0 ? "pressed" : "not pressed";
+    String btn1_str = btn1 ? "pressed" : "not pressed";
+    Serial.printf("wipers: (%.3d,%.3d), btn0: %s, btn1: %s\n",
+        wiperx, wipery, btn0_str.c_str(), btn1_str.c_str());
+}
+
+void write_digipot(uint8_t chip_select_pin, uint16_t data) {
     SPI.beginTransaction(digipotSPI);
     digitalWrite(chip_select_pin, LOW);
 
-    SPI.transfer(0x00);   // Command: write wiper 0
-    SPI.transfer(data);   // Data: 0–255
+    // Commands to the digipot are 16 bits:
+    //   AAAACCDD DDDDDDDD
+    //   A = address
+    //   C = command
+    //   D = data (D0-D8, D9 is unused)
 
-    Serial.print("Wrote: ");
-    Serial.print(data);
-    Serial.print(" to pin ");
-    Serial.println(chip_select_pin);
+    // Because we never go above 192 for the wiper for each
+    // digipot, we don't need the two MSBs. 
+    byte command_byte = WRITE_WIPER_CMD;
+
+    SPI.transfer(WRITE_WIPER_CMD);
+    SPI.transfer(data);
 
     digitalWrite(chip_select_pin, HIGH);
     SPI.endTransaction();
 }
 
-// Arduino setup function. Runs in CPU 1
 void setup() {
-    // let things settle before starting. was getting garbe in serial monitor until I did this.
+    // let things settle before starting. was getting garbage in serial monitor until I did this.
     delay(1000);
     Serial.flush();
     Serial.begin(115200);
@@ -164,11 +193,15 @@ void setup() {
     pinMode(PIN_U2_CS, OUTPUT);
     pinMode(PIN_U3_CS, OUTPUT);
     pinMode(PIN_U4_CS, OUTPUT);
+    pinMode(PIN_BTN0, OUTPUT);
+    pinMode(PIN_BTN1, OUTPUT);
 
     digitalWrite(PIN_U1_CS, HIGH);
     digitalWrite(PIN_U2_CS, HIGH);
     digitalWrite(PIN_U3_CS, HIGH);
     digitalWrite(PIN_U4_CS, HIGH);
+    digitalWrite(PIN_BTN0, LOW);
+    digitalWrite(PIN_BTN1, LOW);
 
     pinMode(PIN_PAIR, INPUT_PULLUP);
 
@@ -187,7 +220,6 @@ void setup() {
 }
 
 void check_pairing() {
-    // pairing pin is active low
     bool pairing = !digitalRead(PIN_PAIR);
 
     if (pairing == is_pairing) return;
@@ -197,53 +229,6 @@ void check_pairing() {
     BP32.enableNewBluetoothConnections(is_pairing);
 }
 
-// void load_new_controller() {
-//     Serial.println(F("New controller detected"));
-    
-//     if (!new_controller->isGamepad()) return;
-
-//     Serial.println(F("Controller is a gamepad"));
-
-//     // if we already have a controller connected, start disconnecting it.
-//     if (controller && controller != new_controller) {
-//         Serial.println("Disconnecting existing controller");
-//         controller->disconnect();
-//     }
-
-//     loading_new_controller = true;
-
-//     // controller = new_controller;
-
-//     // ControllerProperties properties = new_controller->getProperties();
-
-//     // Serial.printf("Controller connected: %s, VID=0x%04x, PID=0x%04x\n",
-//     //     controller->getModelName().c_str(), properties.vendor_id, properties.product_id);
-
-//     // new_controller = nullptr;
-// }
-
-// // returns true if a controller has been connected but isn't yet active
-// bool pending_new_controller() {
-//     if (!new_controller) return false;
-
-//     // first time we see we have a new controller
-//     if (!loading_new_controller) {
-//         load_new_controller();
-//         return true;
-//     }
-
-//     // wait for old controller to disconnect
-//     if (controller && controller->isConnected()) return true;
-
-//     controller = new_controller;
-//     // btw, not sure what bluepad32 does with pointers...this could be leaking memory
-//     // because I'm not deleting...
-//     new_controller = nullptr;
-
-//     return false;
-// }
-
-// Arduino loop function. Runs in CPU 1.
 void loop() {
     check_pairing();
 
