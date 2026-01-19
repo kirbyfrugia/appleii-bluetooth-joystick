@@ -29,7 +29,15 @@ So how to use 2 per axis? The Bluepad32 library gives readings between -512 and 
 
 To keep everything simpler, we just set equal resistance on each digipot. So if we want to go max resistance, we set both digipots to 75kohms.
 
+# Calibration
+
+Press L1 and R1 simultaneously while you have your stick in what should be the zero position. That will get stored as an offset. It's saved in flash memory so it should hold through power loss.
+
 # Buttons
 
 The Apple II buttons are active low, so we write zero when pressed, high when not pressed.
 TODO: add some notes about transistors, resistors, all that jazz.
+
+# Next steps
+
+It might be good to add some physical pots for the calibration. Some adjustments for min/max resistance and for centering. That way the calibration would be easier.

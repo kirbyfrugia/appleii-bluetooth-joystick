@@ -1,36 +1,40 @@
 #include <math.h>
 #include <Bluepad32.h>
 #include <SPI.h>
+#include <Preferences.h>
 
 #define JOYSTICK_STEPS     1024
 #define JOYSTICK_RADIUS    512
 #define SQUARENESS         0.75  // see squareTheCircle for explanation
 #define WIPER_SCALE_FACTOR 0.75
-#define JOYSTICK_STEPS     1024  // 0 to 1023
+#define WIPER_MIN_SAFE     75    // minimum wiper value to prevent any overflow (64 would be ideal)
 #define WIPER_STEPS        257   // 0 to 256, 257 steps
 
 #define PIN_U1_CS    4  // x-axis, upper pot
 #define PIN_U2_CS    5  // x-axis, lower pot
-#define PIN_U3_CS    16 // y-axis, upper pot
-#define PIN_U4_CS    19 // y-axis, lower pot
+#define PIN_U3_CS    25 // y-axis, upper pot
+#define PIN_U4_CS    26 // y-axis, lower pot
 #define PIN_SPI_SCK  18
 #define PIN_SPI_MOSI 23
-#define PIN_G_BTN0     32
-#define PIN_G_BTN1     33
-#define PIN_PAIR     26 // Active Low
+#define PIN_G_BTN0   33
+#define PIN_G_BTN1   32
+#define PIN_PAIR     27 // Active Low
 
 #define WRITE_WIPER_CMD 0b00000000
 
 bool          g_is_pairing   = false;
 bool          g_data_changed = false;
-uint8_t       g_wiperx       = 0.0f;
-uint8_t       g_wipery       = 0.0f;
+int32_t       g_offsetx      = 0;
+int32_t       g_offsety      = 0;
+uint16_t      g_wiperx       = 0.0f;
+uint16_t      g_wipery       = 0.0f;
 bool          g_btn0         = false;
 bool          g_btn1         = true;
 
 // 1 MHz
 SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
 ControllerPtr controller = nullptr;
+Preferences preferences;
 
 void onConnectedController(ControllerPtr ctl) {
     ControllerProperties properties = ctl->getProperties();
@@ -101,28 +105,35 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
     float final_scale = 1.0f + (scale - 1.0f) * SQUARENESS;
 
     // make sure to clamp so we never output greater than 1.0.
-    squaredx = constrain(cx * final_scale, -1.0f, 1.0f);
-    squaredy = constrain(cy * final_scale, -1.0f, 1.0f);
-
-    // now convert back to original range
-    squaredx = squaredx * JOYSTICK_RADIUS;
-    squaredy = squaredy * JOYSTICK_RADIUS;
+    // and convert back to original range
+    squaredx = constrain(cx * final_scale, -1.0f, 1.0f) * JOYSTICK_RADIUS;
+    squaredy = constrain(cy * final_scale, -1.0f, 1.0f) * JOYSTICK_RADIUS;
 
     // Serial.printf("rawx: %+d, rawy: %+d, cx: %+.3f, cy: %+.3f, squaredx: %+.3f, squaredy: %+.3f\n", rawx, rawy, cx, cy, squaredx, squaredy);
 }
 
 void process_stick() {
-    int32_t rawx = controller->axisX();
-    int32_t rawy = controller->axisY();
+    int32_t rawx = controller->axisX() - g_offsetx;
+    int32_t rawy = controller->axisY() + g_offsety;
+
+    // Apply a small center deadzone.
+    if (abs(rawx) < 45) rawx = 0;
+    if (abs(rawy) < 45) rawy = 0;
 
     float squaredx, squaredy;
     squareTheCircle(rawx, rawy, squaredx, squaredy);
 
-    float percentx = (squaredx + 512.0f) / JOYSTICK_STEPS;
-    uint8_t wiperx = WIPER_STEPS * percentx * WIPER_SCALE_FACTOR;
+    // Percentage is 0.0 at left/top, 1.0 at right/bottom
+    float percentx = constrain((squaredx + 512.0f) / JOYSTICK_STEPS, 0.0f, 1.0f);
+    float percenty = constrain((squaredy + 512.0f) / JOYSTICK_STEPS, 0.0f, 1.0f);
 
-    float percenty = (squaredy + 512.0f) / JOYSTICK_STEPS;
-    uint8_t wipery = WIPER_STEPS * percenty * WIPER_SCALE_FACTOR;
+    // We want zero ohms (value 256) to 75k ohms (value 64) per pot.
+    // Range is 256 to 64
+    uint16_t wiperx = (WIPER_STEPS-1) - (uint16_t)(percentx * WIPER_SCALE_FACTOR * (WIPER_STEPS-1));
+    uint16_t wipery = (WIPER_STEPS-1) - (uint16_t)(percenty * WIPER_SCALE_FACTOR * (WIPER_STEPS-1));
+
+    wiperx = max((uint16_t)WIPER_MIN_SAFE, wiperx);
+    wipery = max((uint16_t)WIPER_MIN_SAFE, wipery);
 
     if (wiperx != g_wiperx) {
         g_data_changed = true;
@@ -140,6 +151,24 @@ void process_stick() {
 
 
     // Serial.printf("rawx: %+d, squaredx: %+.3f, g_wiperx: %d, rawy: %+d, squaredy: %+.3f, g_wipery: %d\n", rawx, squaredx, g_wiperx, rawy, squaredy, g_wipery);
+}
+
+void check_for_calibration() {
+    if (controller->l1() && controller->r1()) {
+        g_data_changed = true;
+        g_offsetx = controller->axisX();
+        g_offsety = controller->axisY();
+
+        // save to flash memory
+        preferences.begin("joycal", false);
+        preferences.putInt("ox", g_offsetx);
+        preferences.putInt("oy", g_offsety);
+        preferences.end();
+
+        Serial.printf("Calibrated, new offsets x: %d, y: %d\n", g_offsetx, g_offsety);
+
+        delay(1000); // mild debounce
+    }
 }
 
 void process_buttons() {
@@ -167,36 +196,46 @@ void process_controller() {
 
     g_data_changed = false;
 
+    check_for_calibration();
     process_stick();
     process_buttons();
 
     if (g_data_changed) {
         String g_btn0_str = g_btn0 ? "pressed" : "not pressed";
         String g_btn1_str = g_btn1 ? "pressed" : "not pressed";
-        Serial.printf("wipers: (%.3d,%.3d), g_btn0: %s, g_btn1: %s\n",
-            g_wiperx, g_wipery, g_btn0_str.c_str(), g_btn1_str.c_str());
+        Serial.printf("offset: (%d, %d), wipers: (%.3d,%.3d), g_btn0: %s, g_btn1: %s\n",
+            g_offsetx, g_offsety, g_wiperx, g_wipery, g_btn0_str.c_str(), g_btn1_str.c_str());
     }
 }
 
-void write_digipot(uint8_t chip_select_pin, uint16_t data) {
+void write_spi(uint8_t chip_select_pin, uint8_t command_byte, uint8_t data_byte) {
     SPI.beginTransaction(digipotSPI);
     digitalWrite(chip_select_pin, LOW);
 
-    // Commands to the digipot are 16 bits:
-    //   AAAACCDD DDDDDDDD
-    //   A = address
-    //   C = command
-    //   D = data (D0-D8, D9 is unused)
-
-    // Because we never go above 192 for the wiper for each
-    // digipot, we don't need the two MSBs. 
-    byte command_byte = WRITE_WIPER_CMD;
-
-    SPI.transfer(WRITE_WIPER_CMD);
-    SPI.transfer(data);
+    SPI.transfer(command_byte);
+    SPI.transfer(data_byte);
 
     digitalWrite(chip_select_pin, HIGH);
     SPI.endTransaction();
+}
+
+// Commands to the digipot are 16 bits:
+//   AAAACCDD DDDDDDDD
+//   A = address
+//   C = command
+//   D = data (D0-D8, D9 is unused)
+
+void write_digipot(uint8_t chip_select_pin, uint16_t data) {
+    // Wiper data is 9 bits. The LSB on the command byte is the data
+    uint8_t command_byte = WRITE_WIPER_CMD | (uint8_t)((data >> 8) & 0x01);
+    uint8_t data_byte = (uint8_t)(data & 0xFF);
+    write_spi(chip_select_pin, command_byte, data_byte);
+}
+
+void connect_terminals(uint8_t chip_select_pin) {
+    uint8_t command_byte = 0x40; // TCON Register address.
+    uint8_t data_byte = 0xFF;    // connect A,B,wiper
+    write_spi(chip_select_pin, command_byte, data_byte);
 }
 
 void setup() {
@@ -221,7 +260,18 @@ void setup() {
 
     pinMode(PIN_PAIR, INPUT_PULLUP);
 
+    preferences.begin("joycal", true);
+    g_offsetx = preferences.getInt("ox", 0);
+    g_offsety = preferences.getInt("oy", 0);
+    preferences.end();
+    Serial.printf("Loaded Calibration: g_offsetx: %d, g_offsety: %d\n", g_offsetx, g_offsety);
+
     SPI.begin(PIN_SPI_SCK, -1, PIN_SPI_MOSI, -1);
+
+    connect_terminals(PIN_U1_CS);
+    connect_terminals(PIN_U2_CS);
+    connect_terminals(PIN_U3_CS);
+    connect_terminals(PIN_U4_CS);
 
     Serial.printf("Bluepad32 Firmware: %s\n", BP32.firmwareVersion());
     const uint8_t* addr = BP32.localBdAddress();
