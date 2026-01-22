@@ -10,6 +10,8 @@ So this let's you use a modern bluetooth gamepad on an Apple II. I'll probably s
 
 If you do anything with electronics -- and let's be honest, you shouldn't build one of these if you don't -- then you probably have a lot of parts on hand. The whole thing can be built for pretty cheap if you already have common parts like breadboards, resistors, diodes, etc. The actual parts are cheap, but you end up paying shipping costs and have to buy in bulk when you only need a couple of things. See the parts list at the bottom.
 
+Note: I also saw you can buy an A2io. It probably works better, but it was $55 and it seemed like it required using a mobile device. I didn't want to have to use a mobile app.
+
 # Credits
 
 I learned about how the Apple II joysticks work primarily by reading my Laser 128 technical reference manual and [this article](https://blondihacks.com/apple-ii-gamepad-prototype/) by Quinn Dunki.
