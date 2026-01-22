@@ -2,7 +2,11 @@
 > I'm not really a hardware guy, so there might be stupid stuff here. I assume no liability for you using this with your Apple II. Damage could occur both to it and your ESP32 if I got anything wrong or if you wire it wrong. Use at your own risk.
 > Also, this was built for my Apple IIGS and Laser 128.  They use 9 pin DE9 connectors. You'll have to figure out how to do something different if you have the 15 pin connector.
 
+---
+
 ![Breadboard version](images/appleii-bluetooth-joystick.jpeg)
+
+---
 
 # Purpose
 
@@ -10,9 +14,9 @@ My old school analog joystick isn't great so I wanted to buy a "new" one. But I 
 
 So this let's you use a modern bluetooth gamepad on an Apple II. I'll probably still buy a joystick, but this was a fun project anyway.
 
-If you do anything with electronics -- and let's be honest, you shouldn't build one of these if you don't -- then you probably have a lot of parts on hand. The whole thing can be built for pretty cheap if you already have common parts like breadboards, resistors, diodes, etc. The actual parts are cheap, but you end up paying shipping costs and have to buy in bulk when you only need a couple of things. See the parts list at the bottom.
+If you do anything with electronics then you probably have a hoard of parts on hand. This project is cheap in theory if you already have common parts like breadboards, resistors, diodes, etc. Most of the components are cheap, but most come in bulk so you'll end up paying more if you don't already have some on hand. And digikey is great but shipping is $.
 
-Note: I also saw you can buy an A2io. It probably works better, but it was $55 and it seemed like it required using a mobile device. I didn't want to have to use a mobile app.
+Note: I also saw you can buy an A2io. I'm sure it's better, but it was $55 and it looks like it requires using a mobile device. I didn't want to have to use a mobile app.
 
 # Credits
 
