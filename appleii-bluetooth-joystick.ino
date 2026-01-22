@@ -18,7 +18,10 @@
 #define PIN_SPI_MOSI 23
 #define PIN_G_BTN0   33
 #define PIN_G_BTN1   32
-#define PIN_PAIR     27 // Active Low
+#define PIN_PAIR     13 // Active Low
+#define PIN_245_OE   27 // Output Enable for 74HCT245, normally active low, but inverted logic as
+                        //   it goes through a MOSFET to protect the case where the Apple II is powered
+                        //   but the ESP32 is not.
 
 #define WRITE_WIPER_CMD 0b00000000
 
@@ -29,10 +32,13 @@ int32_t       g_offsety      = 0;
 uint16_t      g_wiperx       = 0.0f;
 uint16_t      g_wipery       = 0.0f;
 bool          g_btn0         = false;
-bool          g_btn1         = true;
+bool          g_btn1         = false;
+
+// 250 KHz
+SPISettings digipotSPI(250000, MSBFIRST, SPI_MODE0);
 
 // 1 MHz
-SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
+// SPISettings digipotSPI(1000000, MSBFIRST, SPI_MODE0);
 ControllerPtr controller = nullptr;
 Preferences preferences;
 
@@ -113,7 +119,7 @@ void squareTheCircle(int32_t &rawx, int32_t &rawy, float &squaredx, float &squar
 }
 
 void process_stick() {
-    int32_t rawx = controller->axisX() - g_offsetx;
+    int32_t rawx = controller->axisX() + g_offsetx;
     int32_t rawy = controller->axisY() + g_offsety;
 
     // Apply a small center deadzone.
@@ -175,16 +181,17 @@ void process_buttons() {
     bool btn0 = controller->a();
     bool btn1 = controller->b();
 
+    digitalWrite(PIN_G_BTN0, btn0);
+    digitalWrite(PIN_G_BTN1, btn1);
+
     if (btn0 != g_btn0) {
         g_data_changed = true;
         g_btn0 = btn0;
-        digitalWrite(PIN_G_BTN0, g_btn0);
     }
 
     if (btn1 != g_btn1) {
         g_data_changed = true;
         g_btn1 = btn1;
-        digitalWrite(PIN_G_BTN1, g_btn1);
     }
 }
 
@@ -233,8 +240,8 @@ void write_digipot(uint8_t chip_select_pin, uint16_t data) {
 }
 
 void connect_terminals(uint8_t chip_select_pin) {
-    uint8_t command_byte = 0x40; // TCON Register address.
-    uint8_t data_byte = 0xFF;    // connect A,B,wiper
+    uint8_t command_byte = 0x41; // TCON Register address.
+    uint8_t data_byte = 0x0F;    // connect A,B,wiper
     write_spi(chip_select_pin, command_byte, data_byte);
 }
 
@@ -260,6 +267,9 @@ void setup() {
 
     pinMode(PIN_PAIR, INPUT_PULLUP);
 
+    pinMode(PIN_245_OE, OUTPUT);
+    digitalWrite(PIN_245_OE, HIGH); // enable the 74HCT245
+
     preferences.begin("joycal", true);
     g_offsetx = preferences.getInt("ox", 0);
     g_offsety = preferences.getInt("oy", 0);
@@ -283,6 +293,7 @@ void setup() {
 
     Serial.println(F("Pairing enabled: false"));
     BP32.enableNewBluetoothConnections(false);
+
 }
 
 void check_pairing() {
