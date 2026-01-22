@@ -1,5 +1,5 @@
 > [!WARNING]
-> I'm not really a hardware guy, so there might be stupid stuff here. I assume no liability for you using this with your Apple II. Damage could occur both to it and your ESP32 if I got anything wrong or if you wire it wrong. Use at your own risk.
+> I'm not really a hardware guy, so there might be stupid stuff here. I assume no liability for you using this with your Apple II. Damage could occur both to it and your ESP32 if I got anything wrong or if you wire it wrong. Build one at your own risk.
 > Also, this was built for my Apple IIGS and Laser 128.  They use 9 pin DE9 connectors. You'll have to figure out how to do something different if you have the 15 pin connector.
 
 ---
@@ -14,9 +14,9 @@ My old school analog joystick isn't great so I wanted to buy a "new" one. But I 
 
 So this let's you use a modern bluetooth gamepad on an Apple II. I'll probably still buy a joystick, but this was a fun project anyway.
 
-If you do anything with electronics then you probably have a hoard of parts on hand. This project is cheap in theory if you already have common parts like breadboards, resistors, diodes, etc. Most of the components are cheap, but most come in bulk so you'll end up paying more if you don't already have some on hand. And digikey is great but shipping is $.
+If you do anything with electronics then you probably have a hoard of parts on hand. This project is cheap in theory if you already have common parts like breadboards, resistors, diodes, etc. Most of the components are cheap, but they only come in bulk so you'll end up paying more if you don't already have some on hand. And digikey is great but shipping is $. All in all, depending on what you have hoarded way, it'll probably cost you somewhere between $15 and $35.
 
-Note: I also saw you can buy an A2io. I'm sure it's better, but it was $55 and it looks like it requires using a mobile device. I didn't want to have to use a mobile app.
+Note: I also saw you can buy an A2io. I'm sure it's better, but it was $55 and it looks like it requires using a mobile device. I didn't want to have to use a mobile app and really the fun was in building this.
 
 # Credits
 
@@ -29,17 +29,23 @@ For the ESP32/bluetooth side, this project uses Bluepad32. Here are some links I
 
 # Usage
 
+## Connecting everything
+
+Plug the DE9 into your joystick port. Plug your ESP32 into USB. They are powered separately. See the section below on power rails, but generally it should be fine to do this in either order. It's probably a good idea to do this with your Apple off.
+
 ## Pairing controllers
 
-By default, bluepad32 automatically pairs with any devices trying to pair. Instead, I implemented a pairing mode so that you can ignore new controllers if you're trying to pair them with other devices in the area. To pair a new controller, you need to bring Pin 13 to low. You can do this with a physical switch or if you're using a breadboard just connect Pin 13 to ground.
+By default, bluepad32 pairing is automatic when devices are put in pairing mode. Instead, I implemented an on-device pairing mode so that you can ignore new controllers if you're trying to pair them with other devices in the area. To pair a new controller, you need to bring Pin 13 to low. You can do this with a physical switch or if you're using a breadboard just connect Pin 13 to ground.
 
 If you have one controller connected, then connect another one, the second one will be the one used.
 
 ## Calibrating your controller
 
-Pressing L1 and R1 simultaneously on your controller will capture an offset value for x and y and apply this to your joystick readings. This allows you to center the controller. If you have the TotalReplay image, there's a joystick program you can use. You can move the stick until it's in the center and press L1 and R2.
+You may find that center on your joystick isn't center on the Apple II. See the section on how analog sticks work and you can probably guess why. Not to mention you may have decades old capacitors in your machine.
 
-The calibration is saved in flash memory so it should hold through power loss.
+Pressing L1 and R1 simultaneously on your controller will capture an offset value for x and y and apply this to your joystick readings. This allows you to center the controller. If you have the TotalReplay image (google it), there's a joystick program you can use. You can move the stick until it's in the center and press L1 and R1.
+
+The calibration is saved in flash memory so it will stick even when you remove power.
 
 # How this stuff works if you want to build one
 
@@ -51,17 +57,17 @@ Traditional Apple II analog joysticks were pretty simple. Inside are two 150k oh
 
 This project works by using digital potentiometers (digipots). It converts the position of the stick on your modern gamepad to resistance values for the digipots. The Apple II expects between 0 and 150kohms resistance but 150kohm resistors are hard to find. So this project uses two 100kohm digipots in series per axis.
 
-If you want to make it cheaper, just use one 100kohm digipot. You may lose some range at the upper end. I haven't tried this, but it seems like that's what others have done when they've built physical joysticks, and the common complaint is that it may not work great for things like flight simulators.
+If you want to make it cheaper, you can probably just use one 100kohm digipot per axis. You may lose some range, though. I haven't tried this, but it seems like that's what others have done when they've built physical joysticks, and the common complaint is that it may not work great for things like flight simulators.
 
-The code basically sets the two MCP4161 digipots per axis to the same wiper values and wires them in series. So to get 150kohms of resistance, both digipots are set to 75kohm.
+The code basically sets the two MCP4161 digipots per axis to the same wiper values and wires them in series. E.g. to get 150kohms of resistance, both digipots are set to 75kohm.
 
-Also, my oldschool joystick allowed close to a square movement pattern. My modern gamepads are pretty constrained to a circle. So the code "squares the circle" a bit to provide a more authentic response. You can control how much by tweaking the code.
+Also, my oldschool joystick allowed close to a square movement pattern. My modern gamepads are pretty constrained to a circle. So the code "squares the circle" a bit to provide a more authentic response. You can control how much by tweaking the code. See the SQUARENESS value.
 
-Finally, there are some variables you can set to control how low the wipers can go. Play with those if you want.
+Finally, there are some variables you can set to control how low the wipers can go. Play with those if you want. See WIPER\\_MIN\_SAFE.
 
 ## Buttons
 
-Apple II buttons are quite simple. We get the button state from bluepad32. When a button is not being pressed, we want the Apple II switch input to float. When it's being pressed, we bring it to 5V through a 470 ohm resistor. We make use of a diode for this.
+Apple II buttons are quite simple. We get the button state from bluepad32. When a button is not being pressed, we want the Apple II button switch input to float. When it's being pressed, we bring it to 5V through a 470 ohm resistor. We make use of a diode for this.
 
 ## Power rails
 
@@ -100,7 +106,7 @@ Check out the [schematic](./schematic/schematic.kicad_sch) built using [KiCad](h
 
 Notes:
 * My ESP32 had different pin numbers than the drawing shows, so just make sure the right GPIO/IO lines are used rather than paying attention to the pin numbers listed.
-* I also sprinkled some 0.1 µF ceramic capacitors (104s) along the power rails (VCC to GND).
+* I also sprinkled some 0.1 µF ceramic capacitors (104s) along the power rails (VCC to GND). These aren't shown in the drawing.
 * The Apple II calls for 470ohm resistors on the buttons. On my Laser 128, that kept me borderline on button presses. I DON'T RECOMMEND IT BECAUSE THE SPEC CALLS FOR 470 ohms and I'm paranoid. But if the buttons aren't triggering you could try a lower value resistor. Do this at your own risk.
 
 # Next steps / Possible problems
