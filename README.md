@@ -2,7 +2,7 @@
 > I'm not really a hardware guy, so there might be stupid stuff here. I assume no liability for you using this with your Apple II. Damage could occur both to it and your ESP32 if I got anything wrong or if you wire it wrong. Use at your own risk.
 > Also, this was built for my Apple IIGS and Laser 128.  They use 9 pin DE9 connectors. You'll have to figure out how to do something different if you have the 15 pin connector.
 
-[Breadboard version](images/appleii-bluetooth-joystick.jpeg)
+![Breadboard version](images/appleii-bluetooth-joystick.jpeg)
 
 # Purpose
 
